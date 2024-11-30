@@ -16,7 +16,12 @@ export default {
         return handleWebSocket(request);
       }
 
-      // Handle HTTP requests
+      // Add a health check endpoint
+      if (url.pathname === "/health") {
+        return new Response("OK", { status: 200 });
+      }
+
+      // Handle other HTTP requests
       switch (url.pathname) {
         case "/":
           return new Response("Welcome to the VLESS server!", { status: 200 });
@@ -102,5 +107,5 @@ clash-meta
 `;
 }
 
-// Ensure the app listens on the correct port
+// Ensure the app logs that it's running
 console.log(`App is running on port ${PORT}`);
