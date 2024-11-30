@@ -8,7 +8,7 @@
     "start": "node index.js"
   },
   "keywords": ["vless", "websocket", "nodejs"],
-  "author": "Your Name",
+  "author": "Yoda",
   "license": "MIT",
   "engines": {
     "node": ">=16"
