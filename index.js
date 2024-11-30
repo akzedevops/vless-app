@@ -3,7 +3,7 @@ import http from "http";
 const PORT = process.env.PORT || 8080;
 
 /**
- * Main entry point for handling requests
+ * Main entry point for handling HTTP requests
  * @param {Request} request
  * @returns {Promise<Response>}
  */
@@ -13,7 +13,7 @@ export default {
       const url = new URL(request.url);
       const upgradeHeader = request.headers.get("Upgrade");
 
-      // Handle WebSocket requests
+      // Handle WebSocket upgrade requests
       if (upgradeHeader === "websocket") {
         return handleWebSocket(request);
       }
@@ -114,24 +114,43 @@ clash-meta
 `;
 }
 
-// Create a simple HTTP server to forward requests to the fetch handler
-http
-  .createServer((req, res) => {
-    // Check if the UUID path is being accessed
-    if (req.url === `/${process.env.UUID}`) {
-      const config = getVLESSConfig(process.env.UUID, req.headers.host);
-      res.writeHead(200, { "Content-Type": "text/plain" });
-      res.end(config);
-      return;
-    }
+// Create a simple HTTP server that differentiates WebSocket and HTTP requests
+const server = http.createServer((req, res) => {
+  // Handle WebSocket upgrade requests
+  if (req.headers.upgrade && req.headers.upgrade.toLowerCase() === "websocket") {
+    const { socket, head } = req;
+    const ws = new WebSocketPair();
+    ws[1].accept();
+    console.log("WebSocket connection established!");
 
-    // Fallback response for other requests
+    ws[1].on("message", (msg) => {
+      console.log("WebSocket received:", msg);
+      ws[1].send(`Echo: ${msg}`);
+    });
+
+    socket.write(
+      "HTTP/1.1 101 Switching Protocols\r\n" +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "\r\n"
+    );
+    return;
+  }
+
+  // Handle UUID path requests
+  if (req.url === `/${process.env.UUID}`) {
+    const config = getVLESSConfig(process.env.UUID, req.headers.host);
     res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end("App is running\n");
-  })
-  .listen(PORT, () => {
-    console.log(`HTTP server is listening on port ${PORT}`);
-  });
+    res.end(config);
+    return;
+  }
 
-// Ensure the app logs that it's running
-console.log(`App is running on port ${PORT}`);
+  // Fallback response for HTTP requests
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("App is running\n");
+});
+
+// Listen on the expected port
+server.listen(PORT, () => {
+  console.log(`Server is listening on port ${PORT}`);
+});
