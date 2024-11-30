@@ -1,3 +1,6 @@
+// Ensure the app binds to port 8080
+const PORT = process.env.PORT || 8080;
+
 /**
  * Main entry point
  * @param {Request} request
@@ -43,7 +46,6 @@ async function handleWebSocket(request) {
   const { 0: client, 1: server } = new WebSocketPair();
   server.accept();
 
-  // Debugging log
   console.log("WebSocket connection established!");
 
   server.addEventListener("message", (event) => {
@@ -99,3 +101,6 @@ clash-meta
 ################################################################
 `;
 }
+
+// Ensure the app listens on the correct port
+console.log(`App is running on port ${PORT}`);
