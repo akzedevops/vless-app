@@ -1,82 +1,95 @@
 import http from "http";
+import crypto from "crypto";
 
 const PORT = process.env.PORT || 8080;
 
 /**
- * Main entry point for handling HTTP requests
- * @param {Request} request
- * @returns {Promise<Response>}
+ * Main server logic
  */
-export default {
-  async fetch(request) {
-    try {
-      const url = new URL(request.url);
-      const upgradeHeader = request.headers.get("Upgrade");
+const server = http.createServer((req, res) => {
+  // Handle WebSocket upgrade requests
+  if (req.headers.upgrade && req.headers.upgrade.toLowerCase() === "websocket") {
+    handleWebSocket(req, res);
+    return;
+  }
 
-      // Handle WebSocket upgrade requests
-      if (upgradeHeader === "websocket") {
-        return handleWebSocket(request);
-      }
+  // Handle UUID path requests
+  if (req.url === `/${process.env.UUID}`) {
+    const vlessConfig = getVLESSConfig(process.env.UUID, req.headers.host);
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(vlessConfig);
+    return;
+  }
 
-      // Health check endpoint
-      if (url.pathname === "/health") {
-        return new Response("OK", { status: 200 });
-      }
+  // Health check endpoint
+  if (req.url === "/health") {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("OK");
+    return;
+  }
 
-      // UUID path to return VLESS configuration
-      if (url.pathname === `/${process.env.UUID}`) {
-        console.log("UUID Path Accessed:", process.env.UUID); // Debug log
-        return new Response(
-          getVLESSConfig(process.env.UUID, request.headers.get("Host")),
-          {
-            status: 200,
-            headers: { "Content-Type": "text/plain;charset=utf-8" },
-          }
-        );
-      }
+  // Fallback response for HTTP requests
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("App is running\n");
+});
 
-      // Root path
-      if (url.pathname === "/") {
-        return new Response("Welcome to the VLESS server!", { status: 200 });
-      }
-
-      // Default case for unknown paths
-      return new Response("Not Found", { status: 404 });
-    } catch (error) {
-      console.error("Error handling request:", error);
-      return new Response(`Error: ${error.message}`, { status: 500 });
-    }
-  },
-};
+// Start the server
+server.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
 
 /**
  * Handles WebSocket connections
- * @param {Request} request
- * @returns {Promise<Response>}
+ * @param {http.IncomingMessage} req
+ * @param {http.ServerResponse} res
  */
-async function handleWebSocket(request) {
-  const { 0: client, 1: server } = new WebSocketPair();
-  server.accept();
+function handleWebSocket(req, res) {
+  const { socket, headers } = req;
+  const key = headers["sec-websocket-key"];
+  if (!key) {
+    res.writeHead(400);
+    res.end("Bad Request");
+    return;
+  }
+
+  // Generate the Sec-WebSocket-Accept value
+  const acceptKey = generateAcceptValue(key);
+
+  // Send the WebSocket handshake response
+  socket.write(
+    "HTTP/1.1 101 Switching Protocols\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Connection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${acceptKey}\r\n\r\n`
+  );
 
   console.log("WebSocket connection established!");
 
-  server.addEventListener("message", (event) => {
-    console.log("Received message:", event.data);
-    server.send(`Echo: ${event.data}`); // Echo received message
+  // Handle WebSocket data
+  socket.on("data", (data) => {
+    console.log("WebSocket received:", data.toString());
+    socket.write(`Echo: ${data}`);
   });
 
-  server.addEventListener("close", () => {
+  socket.on("close", () => {
     console.log("WebSocket connection closed.");
   });
 
-  server.addEventListener("error", (err) => {
+  socket.on("error", (err) => {
     console.error("WebSocket error:", err);
   });
+}
 
-  return new Response(null, {
-    status: 101,
-    webSocket: client,
-  });
+/**
+ * Generate Sec-WebSocket-Accept header value
+ * @param {string} acceptKey
+ * @returns {string}
+ */
+function generateAcceptValue(acceptKey) {
+  return crypto
+    .createHash("sha1")
+    .update(`${acceptKey}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`, "binary")
+    .digest("base64");
 }
 
 /**
@@ -113,44 +126,3 @@ clash-meta
 ################################################################
 `;
 }
-
-// Create a simple HTTP server that differentiates WebSocket and HTTP requests
-const server = http.createServer((req, res) => {
-  // Handle WebSocket upgrade requests
-  if (req.headers.upgrade && req.headers.upgrade.toLowerCase() === "websocket") {
-    const { socket, head } = req;
-    const ws = new WebSocketPair();
-    ws[1].accept();
-    console.log("WebSocket connection established!");
-
-    ws[1].on("message", (msg) => {
-      console.log("WebSocket received:", msg);
-      ws[1].send(`Echo: ${msg}`);
-    });
-
-    socket.write(
-      "HTTP/1.1 101 Switching Protocols\r\n" +
-        "Upgrade: websocket\r\n" +
-        "Connection: Upgrade\r\n" +
-        "\r\n"
-    );
-    return;
-  }
-
-  // Handle UUID path requests
-  if (req.url === `/${process.env.UUID}`) {
-    const config = getVLESSConfig(process.env.UUID, req.headers.host);
-    res.writeHead(200, { "Content-Type": "text/plain" });
-    res.end(config);
-    return;
-  }
-
-  // Fallback response for HTTP requests
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("App is running\n");
-});
-
-// Listen on the expected port
-server.listen(PORT, () => {
-  console.log(`Server is listening on port ${PORT}`);
-});
