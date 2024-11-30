@@ -1,4 +1,5 @@
 import http from "http";
+import net from "net";
 import crypto from "crypto";
 
 const PORT = process.env.PORT || 8080;
@@ -38,7 +39,7 @@ server.listen(PORT, () => {
 });
 
 /**
- * Handles WebSocket connections
+ * Handles WebSocket connections for VLESS protocol
  * @param {http.IncomingMessage} req
  * @param {net.Socket} socket
  * @param {Object} headers
@@ -64,94 +65,97 @@ function handleWebSocket(req, socket, headers) {
 
   console.log("WebSocket connection established!");
 
-  // Handle WebSocket data frames
-  socket.on("data", (data) => {
-    try {
-      const message = parseWebSocketFrame(data);
-      console.log("Received WebSocket message:", message);
+  // Start relaying traffic
+  relayTraffic(socket);
+}
 
-      // Send a properly framed text response
-      const response = constructWebSocketFrame(`Echo: ${message}`);
-      socket.write(response);
+/**
+ * Relays VLESS traffic between the client and the target server
+ * @param {net.Socket} clientSocket
+ */
+function relayTraffic(clientSocket) {
+  clientSocket.on("data", async (data) => {
+    try {
+      const { uuid, targetHost, targetPort, rawData } = parseVLESSHeader(data);
+
+      if (uuid !== process.env.UUID) {
+        console.error("Invalid UUID");
+        clientSocket.destroy();
+        return;
+      }
+
+      console.log(`Relaying traffic to ${targetHost}:${targetPort}`);
+
+      const targetSocket = net.connect(targetPort, targetHost, () => {
+        targetSocket.write(rawData);
+      });
+
+      targetSocket.on("data", (chunk) => {
+        clientSocket.write(chunk);
+      });
+
+      targetSocket.on("end", () => {
+        clientSocket.end();
+      });
+
+      targetSocket.on("error", (err) => {
+        console.error("Error on target socket:", err.message);
+        clientSocket.destroy();
+      });
+
+      clientSocket.on("end", () => {
+        targetSocket.end();
+      });
+
+      clientSocket.on("error", (err) => {
+        console.error("Error on client socket:", err.message);
+        targetSocket.destroy();
+      });
     } catch (err) {
-      console.error("Error processing WebSocket data:", err.message);
-      socket.destroy();
+      console.error("Error processing VLESS data:", err.message);
+      clientSocket.destroy();
     }
   });
-
-  socket.on("close", () => {
-    console.log("WebSocket connection closed.");
-  });
-
-  socket.on("error", (err) => {
-    console.error("WebSocket error:", err.message);
-  });
 }
 
 /**
- * Parses a WebSocket frame to extract the text message
+ * Parses the VLESS header from the client data
  * @param {Buffer} buffer
- * @returns {string}
+ * @returns {{ uuid: string, targetHost: string, targetPort: number, rawData: Buffer }}
  */
-function parseWebSocketFrame(buffer) {
-  const firstByte = buffer[0];
-  const secondByte = buffer[1];
-
-  const isFinalFrame = (firstByte & 0x80) === 0x80; // FIN bit
-  const opcode = firstByte & 0x0f; // Opcode
-  const isMasked = (secondByte & 0x80) === 0x80; // Mask bit
-  const payloadLength = secondByte & 0x7f; // Payload length
-
-  if (!isFinalFrame) {
-    throw new Error("Fragmented frames are not supported");
+function parseVLESSHeader(buffer) {
+  if (buffer.length < 24) {
+    throw new Error("Invalid VLESS header length");
   }
 
-  if (opcode !== 0x1) {
-    throw new Error("Only text frames are supported");
+  const uuid = buffer.slice(1, 17).toString("hex");
+  const command = buffer[18]; // Command (e.g., 0x01 for TCP)
+  const addressType = buffer[19]; // Address type (e.g., 0x01 for IPv4)
+  let addressLength;
+  let targetHost;
+
+  switch (addressType) {
+    case 0x01: // IPv4
+      addressLength = 4;
+      targetHost = buffer.slice(20, 24).join(".");
+      break;
+    case 0x03: // Domain
+      addressLength = buffer[20];
+      targetHost = buffer.slice(21, 21 + addressLength).toString("utf8");
+      break;
+    case 0x04: // IPv6
+      addressLength = 16;
+      targetHost = buffer.slice(20, 36).toString("hex").match(/.{1,4}/g).join(":");
+      break;
+    default:
+      throw new Error("Unsupported address type");
   }
 
-  if (!isMasked) {
-    throw new Error("Frames must be masked");
-  }
+  const port = buffer.readUInt16BE(20 + addressLength);
+  const rawDataIndex = 22 + addressLength;
+  const rawData = buffer.slice(rawDataIndex);
 
-  const maskingKey = buffer.slice(2, 6); // Masking key
-  const payloadData = buffer.slice(6, 6 + payloadLength); // Payload data
-
-  // Unmask the payload data
-  const unmaskedData = Buffer.alloc(payloadLength);
-  for (let i = 0; i < payloadLength; i++) {
-    unmaskedData[i] = payloadData[i] ^ maskingKey[i % 4];
-  }
-
-  return unmaskedData.toString("utf8");
-}
-
-/**
- * Constructs a WebSocket frame for the given message
- * @param {string} message
- * @returns {Buffer}
- */
-function constructWebSocketFrame(message) {
-  const messageBuffer = Buffer.from(message, "utf8");
-  const length = messageBuffer.length;
-
-  let frame;
-  if (length <= 125) {
-    frame = Buffer.alloc(2 + length);
-    frame[0] = 0x81; // FIN and Text Frame opcode
-    frame[1] = length; // Payload length
-    messageBuffer.copy(frame, 2);
-  } else if (length <= 65535) {
-    frame = Buffer.alloc(4 + length);
-    frame[0] = 0x81; // FIN and Text Frame opcode
-    frame[1] = 126; // Extended payload length indicator
-    frame.writeUInt16BE(length, 2); // Extended payload length
-    messageBuffer.copy(frame, 4);
-  } else {
-    throw new Error("Message too long");
-  }
-
-  return frame;
+  return { uuid, targetHost, targetPort: port, rawData };
 }
 
 /**
