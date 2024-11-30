@@ -54,7 +54,7 @@ function handleWebSocket(req, socket, headers) {
   // Generate the Sec-WebSocket-Accept key
   const acceptKey = generateAcceptValue(key);
 
-  // Send the WebSocket handshake response WITHOUT subprotocol
+  // Send the WebSocket handshake response
   socket.write(
     "HTTP/1.1 101 Switching Protocols\r\n" +
       "Upgrade: websocket\r\n" +
@@ -66,8 +66,17 @@ function handleWebSocket(req, socket, headers) {
 
   // Handle WebSocket data frames
   socket.on("data", (data) => {
-    console.log("Received WebSocket data:", data.toString());
-    socket.write(constructWebSocketFrame(data.toString())); // Echo message
+    try {
+      const message = parseWebSocketFrame(data);
+      console.log("Received WebSocket message:", message);
+
+      // Send a properly framed text response
+      const response = constructWebSocketFrame(`Echo: ${message}`);
+      socket.write(response);
+    } catch (err) {
+      console.error("Error processing WebSocket data:", err.message);
+      socket.destroy();
+    }
   });
 
   socket.on("close", () => {
@@ -80,19 +89,68 @@ function handleWebSocket(req, socket, headers) {
 }
 
 /**
+ * Parses a WebSocket frame to extract the text message
+ * @param {Buffer} buffer
+ * @returns {string}
+ */
+function parseWebSocketFrame(buffer) {
+  const firstByte = buffer[0];
+  const secondByte = buffer[1];
+
+  const isFinalFrame = (firstByte & 0x80) === 0x80; // FIN bit
+  const opcode = firstByte & 0x0f; // Opcode
+  const isMasked = (secondByte & 0x80) === 0x80; // Mask bit
+  const payloadLength = secondByte & 0x7f; // Payload length
+
+  if (!isFinalFrame) {
+    throw new Error("Fragmented frames are not supported");
+  }
+
+  if (opcode !== 0x1) {
+    throw new Error("Only text frames are supported");
+  }
+
+  if (!isMasked) {
+    throw new Error("Frames must be masked");
+  }
+
+  const maskingKey = buffer.slice(2, 6); // Masking key
+  const payloadData = buffer.slice(6, 6 + payloadLength); // Payload data
+
+  // Unmask the payload data
+  const unmaskedData = Buffer.alloc(payloadLength);
+  for (let i = 0; i < payloadLength; i++) {
+    unmaskedData[i] = payloadData[i] ^ maskingKey[i % 4];
+  }
+
+  return unmaskedData.toString("utf8");
+}
+
+/**
  * Constructs a WebSocket frame for the given message
  * @param {string} message
  * @returns {Buffer}
  */
 function constructWebSocketFrame(message) {
-  const messageBuffer = Buffer.from(message, "utf-8");
+  const messageBuffer = Buffer.from(message, "utf8");
   const length = messageBuffer.length;
 
-  let frame = Buffer.alloc(length + 2);
-  frame[0] = 0x81; // FIN and Text Frame opcode
-  frame[1] = length; // No masking and message length
+  let frame;
+  if (length <= 125) {
+    frame = Buffer.alloc(2 + length);
+    frame[0] = 0x81; // FIN and Text Frame opcode
+    frame[1] = length; // Payload length
+    messageBuffer.copy(frame, 2);
+  } else if (length <= 65535) {
+    frame = Buffer.alloc(4 + length);
+    frame[0] = 0x81; // FIN and Text Frame opcode
+    frame[1] = 126; // Extended payload length indicator
+    frame.writeUInt16BE(length, 2); // Extended payload length
+    messageBuffer.copy(frame, 4);
+  } else {
+    throw new Error("Message too long");
+  }
 
-  messageBuffer.copy(frame, 2);
   return frame;
 }
 
