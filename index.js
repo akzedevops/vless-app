@@ -54,27 +54,20 @@ function handleWebSocket(req, socket, headers) {
   // Generate the Sec-WebSocket-Accept key
   const acceptKey = generateAcceptValue(key);
 
-  // Send the WebSocket handshake response
+  // Send the WebSocket handshake response WITHOUT subprotocol
   socket.write(
     "HTTP/1.1 101 Switching Protocols\r\n" +
       "Upgrade: websocket\r\n" +
       "Connection: Upgrade\r\n" +
-      `Sec-WebSocket-Accept: ${acceptKey}\r\n` +
-      `Sec-WebSocket-Protocol: chat\r\n\r\n`
+      `Sec-WebSocket-Accept: ${acceptKey}\r\n\r\n`
   );
 
   console.log("WebSocket connection established!");
 
   // Handle WebSocket data frames
   socket.on("data", (data) => {
-    try {
-      console.log("Received WebSocket data:", data.toString());
-      // Echo back the received message
-      socket.write(constructWebSocketFrame(data.toString()));
-    } catch (err) {
-      console.error("Error processing WebSocket data:", err.message);
-      socket.destroy();
-    }
+    console.log("Received WebSocket data:", data.toString());
+    socket.write(constructWebSocketFrame(data.toString())); // Echo message
   });
 
   socket.on("close", () => {
