@@ -1,8 +1,7 @@
-// Ensure the app binds to port 8080
 const PORT = process.env.PORT || 8080;
 
 /**
- * Main entry point
+ * Main entry point for handling requests
  * @param {Request} request
  * @returns {Promise<Response>}
  */
@@ -12,8 +11,8 @@ export default {
       const url = new URL(request.url);
       const upgradeHeader = request.headers.get("Upgrade");
 
+      // Handle WebSocket requests
       if (upgradeHeader === "websocket") {
-        // Handle WebSocket requests
         return handleWebSocket(request);
       }
 
@@ -32,6 +31,7 @@ export default {
           return new Response("Not Found", { status: 404 });
       }
     } catch (error) {
+      console.error("Error handling request:", error);
       return new Response(`Error: ${error.message}`, { status: 500 });
     }
   },
