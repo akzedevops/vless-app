@@ -1,3 +1,5 @@
+import http from "http";
+
 const PORT = process.env.PORT || 8080;
 
 /**
@@ -106,6 +108,16 @@ clash-meta
 ################################################################
 `;
 }
+
+// Create a simple HTTP server to keep the app running
+http
+  .createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("App is running\n");
+  })
+  .listen(PORT, () => {
+    console.log(`HTTP server is listening on port ${PORT}`);
+  });
 
 // Ensure the app logs that it's running
 console.log(`App is running on port ${PORT}`);
