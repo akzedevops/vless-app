@@ -18,12 +18,12 @@ export default {
         return handleWebSocket(request);
       }
 
-      // Add a health check endpoint
+      // Health check endpoint
       if (url.pathname === "/health") {
         return new Response("OK", { status: 200 });
       }
 
-      // Handle UUID path
+      // UUID path to return VLESS configuration
       if (url.pathname === `/${process.env.UUID}`) {
         console.log("UUID Path Accessed:", process.env.UUID); // Debug log
         return new Response(
@@ -35,7 +35,7 @@ export default {
         );
       }
 
-      // Handle the root path
+      // Root path
       if (url.pathname === "/") {
         return new Response("Welcome to the VLESS server!", { status: 200 });
       }
@@ -114,9 +114,18 @@ clash-meta
 `;
 }
 
-// Create a simple HTTP server to keep the app running
+// Create a simple HTTP server to forward requests to the fetch handler
 http
   .createServer((req, res) => {
+    // Check if the UUID path is being accessed
+    if (req.url === `/${process.env.UUID}`) {
+      const config = getVLESSConfig(process.env.UUID, req.headers.host);
+      res.writeHead(200, { "Content-Type": "text/plain" });
+      res.end(config);
+      return;
+    }
+
+    // Fallback response for other requests
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("App is running\n");
   })
@@ -124,5 +133,5 @@ http
     console.log(`HTTP server is listening on port ${PORT}`);
   });
 
-// Log to ensure the app is running
+// Ensure the app logs that it's running
 console.log(`App is running on port ${PORT}`);
