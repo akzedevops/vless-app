@@ -7,9 +7,8 @@ const PORT = process.env.PORT || 8080;
  * Main server logic
  */
 const server = http.createServer((req, res) => {
-  // Handle WebSocket upgrade requests
   if (req.headers.upgrade && req.headers.upgrade.toLowerCase() === "websocket") {
-    handleWebSocket(req, res);
+    handleWebSocket(req, res.socket, req.headers);
     return;
   }
 
@@ -41,18 +40,18 @@ server.listen(PORT, () => {
 /**
  * Handles WebSocket connections
  * @param {http.IncomingMessage} req
- * @param {http.ServerResponse} res
+ * @param {net.Socket} socket
+ * @param {Object} headers
  */
-function handleWebSocket(req, res) {
-  const { socket, headers } = req;
+function handleWebSocket(req, socket, headers) {
   const key = headers["sec-websocket-key"];
   if (!key) {
-    res.writeHead(400);
-    res.end("Bad Request");
+    socket.write("HTTP/1.1 400 Bad Request\r\n\r\n");
+    socket.destroy();
     return;
   }
 
-  // Generate the Sec-WebSocket-Accept value
+  // Generate the Sec-WebSocket-Accept key
   const acceptKey = generateAcceptValue(key);
 
   // Send the WebSocket handshake response
@@ -60,15 +59,22 @@ function handleWebSocket(req, res) {
     "HTTP/1.1 101 Switching Protocols\r\n" +
       "Upgrade: websocket\r\n" +
       "Connection: Upgrade\r\n" +
-      `Sec-WebSocket-Accept: ${acceptKey}\r\n\r\n`
+      `Sec-WebSocket-Accept: ${acceptKey}\r\n` +
+      `Sec-WebSocket-Protocol: chat\r\n\r\n`
   );
 
   console.log("WebSocket connection established!");
 
-  // Handle WebSocket data
+  // Handle WebSocket data frames
   socket.on("data", (data) => {
-    console.log("WebSocket received:", data.toString());
-    socket.write(`Echo: ${data}`);
+    try {
+      console.log("Received WebSocket data:", data.toString());
+      // Echo back the received message
+      socket.write(constructWebSocketFrame(data.toString()));
+    } catch (err) {
+      console.error("Error processing WebSocket data:", err.message);
+      socket.destroy();
+    }
   });
 
   socket.on("close", () => {
@@ -76,8 +82,25 @@ function handleWebSocket(req, res) {
   });
 
   socket.on("error", (err) => {
-    console.error("WebSocket error:", err);
+    console.error("WebSocket error:", err.message);
   });
+}
+
+/**
+ * Constructs a WebSocket frame for the given message
+ * @param {string} message
+ * @returns {Buffer}
+ */
+function constructWebSocketFrame(message) {
+  const messageBuffer = Buffer.from(message, "utf-8");
+  const length = messageBuffer.length;
+
+  let frame = Buffer.alloc(length + 2);
+  frame[0] = 0x81; // FIN and Text Frame opcode
+  frame[1] = length; // No masking and message length
+
+  messageBuffer.copy(frame, 2);
+  return frame;
 }
 
 /**
