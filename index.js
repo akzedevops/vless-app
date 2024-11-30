@@ -1,90 +1,101 @@
-const http = require("http");
-
 /**
- * Main entry point for DigitalOcean Function
- * @param {Object} req - HTTP request object
- * @param {Object} res - HTTP response object
+ * Main entry point
+ * @param {Request} request
+ * @returns {Promise<Response>}
  */
-const handler = async (req, res) => {
-  try {
-    const url = new URL(req.url, `http://${req.headers.host}`);
-    const userID = process.env.UUID || 'd342d11e-d424-4583-b36e-524ab1f0afa4';
-    const proxyIP = process.env.PROXYIP || '';
+export default {
+  async fetch(request) {
+    try {
+      const url = new URL(request.url);
+      const upgradeHeader = request.headers.get("Upgrade");
 
-    if (!isValidUUID(userID)) {
-      res.writeHead(400, { "Content-Type": "text/plain" });
-      return res.end("Invalid UUID");
-    }
+      if (upgradeHeader === "websocket") {
+        // Handle WebSocket requests
+        return handleWebSocket(request);
+      }
 
-    if (url.pathname === "/") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ message: "Welcome to DigitalOcean Functions!" }));
-    } else if (url.pathname === `/${userID}`) {
-      const vlessConfig = getVLESSConfig(userID, req.headers.host);
-      res.writeHead(200, { "Content-Type": "text/plain;charset=utf-8" });
-      return res.end(vlessConfig);
-    } else {
-      res.writeHead(404, { "Content-Type": "text/plain" });
-      return res.end("Not Found");
+      // Handle HTTP requests
+      switch (url.pathname) {
+        case "/":
+          return new Response("Welcome to the VLESS server!", { status: 200 });
+
+        case `/${process.env.UUID}`:
+          return new Response(getVLESSConfig(process.env.UUID, request.headers.get("Host")), {
+            status: 200,
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+          });
+
+        default:
+          return new Response("Not Found", { status: 404 });
+      }
+    } catch (error) {
+      return new Response(`Error: ${error.message}`, { status: 500 });
     }
-  } catch (err) {
-    res.writeHead(500, { "Content-Type": "text/plain" });
-    res.end(`Internal Server Error: ${err.message}`);
-  }
+  },
 };
 
 /**
- * Validate UUID format
- * @param {string} uuid
- * @returns {boolean}
+ * Handles WebSocket connections
+ * @param {Request} request
+ * @returns {Promise<Response>}
  */
-function isValidUUID(uuid) {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(uuid);
+async function handleWebSocket(request) {
+  const { 0: client, 1: server } = new WebSocketPair();
+  server.accept();
+
+  // Debugging log
+  console.log("WebSocket connection established!");
+
+  server.addEventListener("message", (event) => {
+    console.log("Received message:", event.data);
+    server.send(`Echo: ${event.data}`); // Echo received message
+  });
+
+  server.addEventListener("close", () => {
+    console.log("WebSocket connection closed.");
+  });
+
+  server.addEventListener("error", (err) => {
+    console.error("WebSocket error:", err);
+  });
+
+  return new Response(null, {
+    status: 101,
+    webSocket: client,
+  });
 }
 
 /**
  * Generate VLESS configuration
- * @param {string} userID
- * @param {string | null} hostName
+ * @param {string} uuid
+ * @param {string} host
  * @returns {string}
  */
-function getVLESSConfig(userID, hostName) {
-  const protocol = "vless";
-  const vlessMain =
-    `${protocol}://${userID}@${hostName}:443` +
-    `?encryption=none&security=tls&sni=${hostName}&fp=randomized&type=ws&host=${hostName}&path=%2F%3Fed%3D2048#${hostName}`;
-
+function getVLESSConfig(uuid, host) {
   return `
 ################################################################
 v2ray
 ---------------------------------------------------------------
-${vlessMain}
+vless://${uuid}@${host}:443?encryption=none&security=tls&sni=${host}&fp=randomized&type=ws&host=${host}&path=%2F%3Fed%3D2048#${host}
 ---------------------------------------------------------------
 ################################################################
 clash-meta
 ---------------------------------------------------------------
 - type: vless
-  name: ${hostName}
-  server: ${hostName}
+  name: ${host}
+  server: ${host}
   port: 443
-  uuid: ${userID}
+  uuid: ${uuid}
   network: ws
   tls: true
   udp: false
-  sni: ${hostName}
+  sni: ${host}
   client-fingerprint: chrome
   ws-opts:
     path: "/?ed=2048"
     headers:
-      host: ${hostName}
+      host: ${host}
 ---------------------------------------------------------------
 ################################################################
 `;
 }
-
-// Start the HTTP server
-const server = http.createServer(handler);
-server.listen(8080, () => {
-  console.log("Server is running on port 8080");
-});
