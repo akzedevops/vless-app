@@ -23,20 +23,25 @@ export default {
         return new Response("OK", { status: 200 });
       }
 
-      // Handle other HTTP requests
-      switch (url.pathname) {
-        case "/":
-          return new Response("Welcome to the VLESS server!", { status: 200 });
-
-        case `/${process.env.UUID}`:
-          return new Response(getVLESSConfig(process.env.UUID, request.headers.get("Host")), {
+      // Handle UUID path
+      if (url.pathname === `/${process.env.UUID}`) {
+        console.log("UUID Path Accessed:", process.env.UUID); // Debug log
+        return new Response(
+          getVLESSConfig(process.env.UUID, request.headers.get("Host")),
+          {
             status: 200,
             headers: { "Content-Type": "text/plain;charset=utf-8" },
-          });
-
-        default:
-          return new Response("Not Found", { status: 404 });
+          }
+        );
       }
+
+      // Handle the root path
+      if (url.pathname === "/") {
+        return new Response("Welcome to the VLESS server!", { status: 200 });
+      }
+
+      // Default case for unknown paths
+      return new Response("Not Found", { status: 404 });
     } catch (error) {
       console.error("Error handling request:", error);
       return new Response(`Error: ${error.message}`, { status: 500 });
@@ -119,5 +124,5 @@ http
     console.log(`HTTP server is listening on port ${PORT}`);
   });
 
-// Ensure the app logs that it's running
+// Log to ensure the app is running
 console.log(`App is running on port ${PORT}`);
